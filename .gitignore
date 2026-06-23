@@ -1,0 +1,30 @@
+# Python caches
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+
+# Runtime outputs
+**/logs/
+**/export/
+**/markdown_exports/
+**/group_daily_exports/
+**/decrypted/
+**/wxwork_decrypted/
+**/wxwork_export/
+**/wechat_files/
+
+# Local secrets and machine-specific config
+**/config.yaml
+**/config.json
+**/config.local.yaml
+**/config.local.json
+**/config.secret.yaml
+**/config.secret.json
+**/all_keys.json
+**/wxwork_keys.json
+**/memory.yaml
+
+# OS clutter
+.DS_Store
+Thumbs.db

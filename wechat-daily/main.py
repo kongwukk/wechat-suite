@@ -1,0 +1,503 @@
+"""
+main.py - WeChat Daily 主入口
+
+每日自动流程：
+  1. 提取微信聊天记录
+  2. 清洗处理消息
+  3. AI 生成总结 & 提取任务
+  4. 写入 Notion
+
+用法：
+  python main.py                  # 处理今天的聊天记录
+  python main.py --date 2025-06-01  # 处理指定日期
+  python main.py --setup            # 首次设置（创建 Notion 数据库）
+  python main.py --test             # 测试模式（不调用 API）
+  python main.py --backfill 7       # 补跑最近 7 天
+"""
+
+import argparse
+import logging
+import re
+import shutil
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import yaml
+
+from proxy_env import normalize_proxy_env
+
+normalize_proxy_env()
+
+from auto_export import AutoExporter
+from extractor import WeChatExtractor
+from processor import MessageProcessor
+from ai_analyzer import AIAnalyzer, AIAnalyzerMock
+from notion_writer import NotionWriter
+from memory_manager import MemoryManager
+from wechat_core import DirectReadPipeline
+
+# ------------------------------------------------------------------
+# 日志配置
+# ------------------------------------------------------------------
+def setup_logging(config: dict):
+    log_cfg = config.get("logging", {})
+    log_file = log_cfg.get("file", "logs/run.log")
+    log_level = getattr(logging, log_cfg.get("level", "INFO").upper(), logging.INFO)
+
+    # 确保日志目录存在
+    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+
+logger = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------
+# 加载配置
+# ------------------------------------------------------------------
+def load_config(config_path: str = "config.yaml") -> dict:
+    path = Path(config_path)
+    if not path.exists():
+        print(f"配置文件不存在: {path.absolute()}")
+        print("请复制 config.yaml 并填写你的 API Keys")
+        sys.exit(1)
+
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+# ------------------------------------------------------------------
+# 核心流程
+# ------------------------------------------------------------------
+def run_daily(
+    config: dict,
+    target_date: datetime,
+    test_mode: bool = False,
+    console_mode: bool = False,
+    chat_filter: str = "",
+    output_dir: str = "",
+):
+    """执行单日处理流程"""
+    date_str = target_date.strftime("%Y-%m-%d")
+
+    logger.info("=" * 60)
+    logger.info(f"开始处理 {date_str} 的聊天记录")
+    logger.info("=" * 60)
+
+    # 步骤 0+1: 获取聊天记录（优先直接读取数据库，失败则回退到 API 导出）
+    wechat_cfg = config.get("wechat", {})
+    raw_data = None
+    pipeline = None
+
+    # 方式 A: 直接读取微信数据库（无需 WeChatDataAnalysis）
+    logger.info("[1/5] 尝试直接读取微信数据库...")
+    try:
+        pipeline = DirectReadPipeline(config)
+        raw_data = pipeline.read_date(target_date)
+        if raw_data.get("chats"):
+            logger.info(f"直接读取成功: {len(raw_data['chats'])} 个对话")
+        else:
+            raw_data = None
+            logger.info("直接读取未获取到消息，尝试 API 导出方式")
+    except Exception as e:
+        logger.info(f"直接读取不可用 ({e})，尝试 API 导出方式")
+        raw_data = None
+    finally:
+        if pipeline:
+            pipeline.cleanup()
+
+    # 方式 B: 通过 WeChatDataAnalysis API 导出
+    if not raw_data or not raw_data.get("chats"):
+        api_url = wechat_cfg.get("tool_api_url", "")
+        if api_url:
+            logger.info("[1/5] 通过 API 自动导出聊天记录...")
+            try:
+                exporter = AutoExporter(api_url, wechat_cfg.get("export_dir", "export"))
+                exporter.export_date(target_date)
+            except ConnectionError:
+                logger.warning("WeChatDataAnalysis 后端未运行，跳过自动导出")
+            except Exception as e:
+                logger.warning(f"自动导出失败: {e}")
+
+        logger.info("[1/5] 从导出文件提取聊天记录...")
+        extractor = WeChatExtractor(config)
+        try:
+            raw_data = extractor.extract_auto(target_date)
+        except Exception as e:
+            logger.error(f"提取失败: {e}")
+            return False
+
+    if not raw_data or not raw_data.get("chats"):
+        logger.warning(f"{date_str} 没有找到聊天记录，跳过")
+        return False
+
+    if chat_filter:
+        raw_data["chats"] = [
+            chat for chat in raw_data["chats"]
+            if chat.get("chat_name") == chat_filter
+        ]
+        if not raw_data["chats"]:
+            logger.warning(f"{date_str} 没有找到对话: {chat_filter}")
+            return False
+        logger.info(f"仅处理对话: {chat_filter}")
+
+    # 步骤 2: 处理消息
+    logger.info("[2/5] 清洗和处理消息...")
+    processor = MessageProcessor(config)
+    processed_data = processor.process(raw_data)
+
+    if not processed_data.get("chats"):
+        logger.warning(f"{date_str} 处理后没有有效对话，跳过")
+        return False
+
+    # 构建 AI 用的文本
+    chat_text = processor.build_prompt_text(processed_data)
+    logger.info(f"构建完成，文本长度: {len(chat_text)} 字符")
+
+    # 加载记忆
+    memory = MemoryManager()
+    memory_text = memory.build_prompt_text()
+
+    # 步骤 3: AI 分析
+    logger.info("[3/5] AI 分析中...")
+    if test_mode:
+        analyzer = AIAnalyzerMock()
+        logger.info("（测试模式，使用 Mock 数据）")
+    else:
+        analyzer = AIAnalyzer(config)
+
+    # 生成每日总结
+    summary = analyzer.generate_daily_summary(chat_text, date_str, memory_text)
+    logger.info(f"总结状态: {summary.get('status')}, "
+                f"标签: {summary.get('tags')}")
+
+    # 提取任务
+    tasks = analyzer.extract_tasks(chat_text, date_str, memory_text)
+    logger.info(f"提取到 {len(tasks)} 个任务:")
+    for t in tasks:
+        logger.info(f"  - [{t.get('priority')}] {t['title']} "
+                     f"(DDL: {t.get('deadline', '无')})")
+
+    if output_dir:
+        output_path = _write_markdown_result(output_dir, date_str, summary, tasks, chat_filter)
+        logger.info(f"Markdown 已导出: {output_path}")
+
+    if console_mode or output_dir:
+        _print_console_result(date_str, summary, tasks)
+        return True
+
+    # 步骤 4: 写入 Notion
+    logger.info("[4/5] 写入 Notion...")
+    if test_mode:
+        logger.info("（测试模式，跳过 Notion 写入）")
+        logger.info("--- 每日总结预览 ---")
+        logger.info(summary.get("summary", ""))
+        logger.info("--- 任务列表预览 ---")
+        for t in tasks:
+            logger.info(f"  [{t['priority']}] {t['title']} → {t.get('deadline', '无DDL')}")
+        return True
+
+    writer = NotionWriter(config)
+
+    # 写入总结
+    try:
+        summary_page_id = writer.write_daily_summary(summary)
+        logger.info(f"每日总结已写入: {summary_page_id}")
+    except Exception as e:
+        logger.error(f"写入每日总结失败: {e}")
+
+    # 写入任务
+    try:
+        task_ids = writer.write_tasks(tasks, date_str)
+        logger.info(f"写入 {len(task_ids)} 个任务")
+    except Exception as e:
+        logger.error(f"写入任务失败: {e}")
+
+    # 步骤 5: AI 反思 & 更新记忆
+    if not test_mode:
+        try:
+            logger.info("[5/5] AI 反思，更新记忆...")
+            reflection = analyzer.reflect(chat_text, summary, tasks, memory_text)
+            memory.merge_reflection(reflection)
+        except Exception as e:
+            logger.warning(f"AI 反思失败（不影响主流程）: {e}")
+
+    # 清理导出文件（ZIP + 解压目录）
+    export_dir = Path(wechat_cfg.get("export_dir", "export"))
+    try:
+        import glob as _glob
+        for zf in _glob.glob(str(export_dir / "wechat_chat_export_*.zip")):
+            Path(zf).unlink()
+            logger.info(f"已删除 ZIP: {zf}")
+        for d in export_dir.iterdir():
+            if d.is_dir() and d.name.startswith("wechat_chat_export_"):
+                shutil.rmtree(d)
+                logger.info(f"已删除导出目录: {d}")
+    except Exception as e:
+        logger.warning(f"清理导出文件失败: {e}")
+
+    # 记录成功处理的日期
+    _mark_completed(date_str)
+
+    logger.info(f"✅ {date_str} 处理完成!")
+    return True
+
+
+def _print_console_result(date_str: str, summary: dict, tasks: list):
+    """Print the generated summary and tasks without writing to Notion."""
+    print("\n" + "=" * 60)
+    print(f"{date_str} 每日总结")
+    print("=" * 60)
+    print(summary.get("summary", "").strip() or "（无总结内容）")
+
+    print("\n" + "=" * 60)
+    print("待办任务")
+    print("=" * 60)
+    if not tasks:
+        print("（无待办任务）")
+        return
+
+    for index, task in enumerate(tasks, 1):
+        deadline = task.get("deadline") or task.get("deadline_text") or "无DDL"
+        priority = task.get("priority", "medium")
+        print(f"{index}. [{priority}] {task.get('title', '')} ({deadline})")
+        detail = task.get("detail", "").strip()
+        if detail:
+            print(f"   {detail}")
+
+
+def _write_markdown_result(output_dir: str, date_str: str, summary: dict, tasks: list, chat_name: str = "") -> Path:
+    """Write the generated summary and tasks to a Markdown file."""
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    title = f"{date_str} {chat_name or '微信聊天'} 每日总结".strip()
+    filename_parts = [date_str]
+    if chat_name:
+        filename_parts.append(_safe_filename(chat_name))
+    filename_parts.append("summary.md")
+    output_path = out_dir / "-".join(filename_parts)
+
+    lines = [
+        f"# {title}",
+        "",
+        "## 总结",
+        "",
+        summary.get("summary", "").strip() or "（无总结内容）",
+        "",
+        "## 待办任务",
+        "",
+    ]
+
+    if tasks:
+        for index, task in enumerate(tasks, 1):
+            deadline = task.get("deadline") or task.get("deadline_text") or "无DDL"
+            priority = task.get("priority", "medium")
+            title_text = task.get("title", "")
+            lines.append(f"{index}. [{priority}] {title_text} ({deadline})")
+            detail = task.get("detail", "").strip()
+            if detail:
+                lines.append(f"   {detail}")
+    else:
+        lines.append("（无待办任务）")
+
+    output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return output_path
+
+
+def _safe_filename(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    return safe.strip("._-") or "chat"
+
+
+def _completed_dates_file() -> Path:
+    p = Path("logs/completed_dates.txt")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _mark_completed(date_str: str):
+    f = _completed_dates_file()
+    existing = set()
+    if f.exists():
+        existing = set(f.read_text(encoding="utf-8").strip().splitlines())
+    if date_str not in existing:
+        with open(f, "a", encoding="utf-8") as fp:
+            fp.write(date_str + "\n")
+
+
+def _get_missed_dates(catchup_days: int) -> list:
+    f = _completed_dates_file()
+    completed = set()
+    if f.exists():
+        completed = set(f.read_text(encoding="utf-8").strip().splitlines())
+
+    today = datetime.now().date()
+    missed = []
+    for i in range(catchup_days, 0, -1):
+        d = today - timedelta(days=i)
+        ds = d.strftime("%Y-%m-%d")
+        if ds not in completed:
+            missed.append(d)
+    return missed
+
+
+# ------------------------------------------------------------------
+# 首次设置
+# ------------------------------------------------------------------
+def setup(config: dict):
+    """首次设置：创建 Notion 数据库"""
+    print("\n" + "=" * 50)
+    print("WeChat Daily - 首次设置")
+    print("=" * 50)
+    print("\n这个步骤会在你的 Notion 中创建两个数据库：")
+    print("  1. 📅 每日总结 - 记录每天的活动总结")
+    print("  2. ✅ 待办任务 - 从聊天中提取的任务和DDL")
+
+    print("\n准备工作：")
+    print("  1. 在 notion.so/my-integrations 创建一个 Integration")
+    print("  2. 复制 Integration 的 API Key 到 config.yaml")
+    print("  3. 在 Notion 中创建一个空白页面")
+    print("  4. 将 Integration 连接到该页面（页面右上角 ··· → Connections）")
+
+    parent_page_id = input("\n请输入 Notion 父页面的 ID: ").strip()
+
+    if not parent_page_id:
+        print("页面 ID 不能为空")
+        return
+
+    # 去除可能的 URL 前缀
+    if "/" in parent_page_id:
+        parent_page_id = parent_page_id.split("/")[-1]
+    if "-" in parent_page_id:
+        parent_page_id = parent_page_id.split("-")[-1]
+    if "?" in parent_page_id:
+        parent_page_id = parent_page_id.split("?")[0]
+
+    writer = NotionWriter(config)
+
+    try:
+        result = writer.setup_databases(parent_page_id)
+        print("\n✅ 数据库创建成功!")
+        print(f"\n请将以下 ID 填入 config.yaml:")
+        print(f"  daily_summary_db_id: \"{result['summary_db_id']}\"")
+        print(f"  todo_tasks_db_id: \"{result['todo_db_id']}\"")
+    except Exception as e:
+        print(f"\n❌ 创建失败: {e}")
+        print("请检查 API Key 和页面 ID 是否正确，以及 Integration 是否已连接到页面")
+
+
+# ------------------------------------------------------------------
+# CLI 入口
+# ------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(
+        description="WeChat Daily - 微信聊天记录自动总结 & 任务提取",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python main.py                     # 处理今天
+  python main.py --date 2025-06-01   # 处理指定日期
+  python main.py --setup             # 首次设置 Notion
+  python main.py --test              # 测试模式
+  python main.py --console           # 输出到控制台，不写入 Notion
+  python main.py --output-dir out    # 导出 Markdown，不写入 Notion
+  python main.py --chat "群名"        # 只处理指定会话
+  python main.py --backfill 7        # 补跑最近7天
+        """,
+    )
+    parser.add_argument("--config", default="config.yaml", help="配置文件路径")
+    parser.add_argument("--date", help="指定日期 (YYYY-MM-DD)")
+    parser.add_argument("--setup", action="store_true", help="首次设置 Notion 数据库")
+    parser.add_argument("--test", action="store_true", help="测试模式（不调用真实 API）")
+    parser.add_argument("--console", action="store_true", help="输出到控制台，不写入 Notion")
+    parser.add_argument("--output-dir", default="", help="导出 Markdown 到指定目录，不写入 Notion")
+    parser.add_argument("--chat", default="", help="只处理指定对话名称")
+    parser.add_argument("--backfill", type=int, help="补跑最近 N 天")
+
+    args = parser.parse_args()
+
+    # 加载配置
+    config = load_config(args.config)
+    setup_logging(config)
+
+    # 首次设置
+    if args.setup:
+        setup(config)
+        return
+
+    # 确定日期
+    if args.date:
+        try:
+            target_date = datetime.strptime(args.date, "%Y-%m-%d")
+        except ValueError:
+            print(f"日期格式错误: {args.date}，请使用 YYYY-MM-DD 格式")
+            sys.exit(1)
+    else:
+        target_date = datetime.now()
+
+    # 补跑模式
+    if args.backfill:
+        logger.info(f"补跑模式: 最近 {args.backfill} 天")
+        success_count = 0
+        for i in range(args.backfill, 0, -1):
+            date = datetime.now() - timedelta(days=i)
+            try:
+                if run_daily(
+                    config,
+                    date,
+                    test_mode=args.test,
+                    console_mode=args.console,
+                    chat_filter=args.chat,
+                    output_dir=args.output_dir,
+                ):
+                    success_count += 1
+            except Exception as e:
+                logger.error(f"{date.strftime('%Y-%m-%d')} 处理失败: {e}")
+        logger.info(f"补跑完成: {success_count}/{args.backfill} 天成功")
+        return
+
+    # 自动补跑漏掉的日期（仅在默认模式下，非 --date 指定时）
+    if not args.date:
+        catchup_days = config.get("processing", {}).get("auto_catchup_days", 7)
+        missed = _get_missed_dates(catchup_days)
+        if missed:
+            logger.info(f"检测到 {len(missed)} 天未处理，自动补跑...")
+            for d in missed:
+                try:
+                    run_daily(
+                        config,
+                        datetime.combine(d, datetime.min.time()),
+                        test_mode=args.test,
+                        console_mode=args.console,
+                        chat_filter=args.chat,
+                        output_dir=args.output_dir,
+                    )
+                except Exception as e:
+                    logger.error(f"{d.strftime('%Y-%m-%d')} 补跑失败: {e}")
+
+    # 单日模式
+    try:
+        run_daily(
+            config,
+            target_date,
+            test_mode=args.test,
+            console_mode=args.console,
+            chat_filter=args.chat,
+            output_dir=args.output_dir,
+        )
+    except Exception as e:
+        logger.error(f"处理失败: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
