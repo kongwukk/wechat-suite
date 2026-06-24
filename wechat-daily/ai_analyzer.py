@@ -3,6 +3,7 @@ ai_analyzer.py - AI 分析模块
 
 支持多种 AI 后端：
   - DeepSeek（推荐，国内直连，便宜）
+  - NewAPI（OpenAI 兼容聚合接口）
   - 通义千问 / 阿里云百炼
   - OpenAI / GPT
   - Claude（需翻墙）
@@ -24,6 +25,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 # 各平台的 API 地址
 API_BASES = {
     "deepseek": "https://api.deepseek.com",
+    "newapi": "http://127.0.0.1:3000/v1",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "openai": "https://api.openai.com/v1",
 }
@@ -31,6 +33,7 @@ API_BASES = {
 # 各平台推荐的默认模型
 DEFAULT_MODELS = {
     "deepseek": "deepseek-chat",
+    "newapi": "gpt-4o-mini",
     "qwen": "qwen-plus",
     "openai": "gpt-4o",
 }
@@ -43,16 +46,16 @@ class AIAnalyzer:
         ai_cfg = config["ai"]
         self.provider = ai_cfg.get("provider", "deepseek").lower()
         api_key = ai_cfg["api_key"]
-        self.model = ai_cfg.get("model", DEFAULT_MODELS.get(self.provider, "deepseek-chat"))
+        self.model = ai_cfg.get("model", DEFAULT_MODELS.get(self.provider, DEFAULT_MODELS["deepseek"]))
         self.max_tokens = ai_cfg.get("max_tokens", 4096)
         self.my_nickname = config.get("wechat", {}).get("my_nickname", "")
 
         # 确定 API 地址
-        base_url = ai_cfg.get("base_url", API_BASES.get(self.provider, ""))
+        base_url = ai_cfg.get("base_url") or API_BASES.get(self.provider, "")
         if not base_url:
             base_url = API_BASES["deepseek"]
 
-        # 使用 OpenAI SDK（兼容 DeepSeek / 通义千问 / OpenAI）
+        # 使用 OpenAI SDK（兼容 DeepSeek / NewAPI / 通义千问 / OpenAI）
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
         logger.info(f"AI 后端: {self.provider}, 模型: {self.model}")

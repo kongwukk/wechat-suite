@@ -4,7 +4,7 @@
 # 复制本文件为 config.yaml，然后填入你的 API Keys
 
 # ---------- AI 设置 ----------
-# 支持: deepseek / qwen / openai
+# 支持: deepseek / newapi / qwen / openai
 ai:
   provider: "deepseek"
   api_key: ""                         # 在 platform.deepseek.com 获取
@@ -18,6 +18,12 @@ ai:
   #   provider: "qwen"
   #   api_key: "YOUR_QWEN_API_KEY"
   #   model: "qwen-plus"
+  #
+  # NewAPI:
+  #   provider: "newapi"
+  #   api_key: "YOUR_NEWAPI_API_KEY"
+  #   model: "gpt-4o-mini"             # 改成你在 NewAPI 里配置的模型名
+  #   base_url: "http://127.0.0.1:3000/v1"
   #
   # OpenAI:
   #   provider: "openai"

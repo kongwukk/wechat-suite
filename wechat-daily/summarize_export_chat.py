@@ -21,8 +21,16 @@ LOG = logging.getLogger(__name__)
 
 API_BASES = {
     "deepseek": "https://api.deepseek.com",
+    "newapi": "http://127.0.0.1:3000/v1",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "openai": "https://api.openai.com/v1",
+}
+
+DEFAULT_MODELS = {
+    "deepseek": "deepseek-chat",
+    "newapi": "gpt-4o-mini",
+    "qwen": "qwen-plus",
+    "openai": "gpt-4o",
 }
 
 FILTERED_TYPES = {"system", "sticker"}
@@ -145,8 +153,8 @@ def call_model(config: dict, prompt: str) -> str:
     provider = ai_cfg.get("provider", "deepseek").lower()
     api_key = ai_cfg["api_key"]
     base_url = ai_cfg.get("base_url") or API_BASES.get(provider, API_BASES["deepseek"])
-    requested_model = ai_cfg.get("model") or "deepseek-chat"
-    fallback_models = [requested_model, "deepseek-chat"]
+    requested_model = ai_cfg.get("model") or DEFAULT_MODELS.get(provider, DEFAULT_MODELS["deepseek"])
+    fallback_models = list(dict.fromkeys([requested_model, DEFAULT_MODELS.get(provider, requested_model)]))
 
     client = OpenAI(api_key=api_key, base_url=base_url)
     last_error: Exception | None = None

@@ -2,21 +2,21 @@
 
 微信聊天自动总结工具。
 
-它可以从真实微信数据库里导出指定群聊，再用 DeepSeek 生成当天 Markdown 日报。也支持继续保留原来的 Notion 流程。
+它可以从真实微信数据库里导出指定群聊，再用 DeepSeek、NewAPI 或其他 OpenAI 兼容模型生成当天 Markdown 日报。也支持继续保留原来的 Notion 流程。
 
 ## 现在能做什么
 
 - 直接读取真实微信数据，导出指定群聊
 - 按天生成群聊总结 Markdown
 - 也可以继续使用原来的每日总结 + 待办提取流程
-- 支持 DeepSeek、OpenAI 兼容接口
+- 支持 DeepSeek、NewAPI、OpenAI 兼容接口
 
 ## 适用环境
 
 - Linux / Ubuntu
 - Python 3.12+
 - 已解密的微信数据库或可通过 `wechat-decrypt` 读取的微信数据
-- DeepSeek API Key
+- DeepSeek、NewAPI 或其他 OpenAI 兼容模型 API Key
 
 ## 快速开始
 
@@ -46,6 +46,16 @@ group_daily:
 - `chat_name` 是群名
 - `date` 是要总结的日期，格式 `YYYY-MM-DD`
 - 导出路径和输出目录会自动使用默认值
+
+使用 NewAPI 时，把 `ai` 改成类似这样：
+
+```yaml
+ai:
+  provider: "newapi"
+  api_key: "YOUR_NEWAPI_API_KEY"
+  model: "gpt-4o-mini"
+  base_url: "http://127.0.0.1:3000/v1"
+```
 
 如果你想改默认输出目录或解密仓库，也可以在 `group_daily` 下继续配置。
 
@@ -95,7 +105,7 @@ python main.py --output-dir out --chat "某个群"
 
 - `config.yaml` 里包含 API Key，不要提交自己的真实 key 到公开仓库
 - `markdown_exports/` 和 `group_daily_exports/` 属于运行产物，可以随时删除
-- 如果导出失败，先检查微信数据目录、`wechat-decrypt` 配置和 `DeepSeek` API Key
+- 如果导出失败，先检查微信数据目录、`wechat-decrypt` 配置和模型 API Key
 
 ## 许可证
 
