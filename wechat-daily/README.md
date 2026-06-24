@@ -31,6 +31,9 @@ cd wechat-daily
 
 编辑 `config.yaml`。
 
+如果同目录下存在 `config.local.yaml`，`./run_group_daily.sh` 会优先使用它；
+命令启动时也会打印当前实际使用的配置文件路径。
+
 如果你只想用“群聊日报”功能，只需要改这几项：
 
 ```yaml
@@ -50,6 +53,12 @@ group_daily:
 
 ```bash
 ./run_group_daily.sh
+```
+
+如果你想显式指定配置文件：
+
+```bash
+./run_group_daily.sh /abs/path/to/config.yaml
 ```
 
 它会自动：

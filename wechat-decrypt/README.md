@@ -208,6 +208,7 @@ py -m pip install --user -r requirements.txt
 - macOS: `~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<wxid>/db_storage`
 - Windows: 微信设置 → 文件管理中查看
 - Linux: `~/Documents/xwechat_files/<wxid>/db_storage`
+- Linux（中文目录环境）: `~/文档/xwechat_files/<wxid>/db_storage`
 
 ### 常用命令
 
