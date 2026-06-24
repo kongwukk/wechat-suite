@@ -8,6 +8,8 @@ if [[ -f "$SCRIPT_DIR/config.local.yaml" ]]; then
 fi
 CONFIG_PATH="${1:-$DEFAULT_CONFIG}"
 
+echo "[run_group_daily] using config: $CONFIG_PATH"
+
 exec "$SCRIPT_DIR/.venv/bin/python" \
   "$SCRIPT_DIR/run_group_daily_pipeline.py" \
   --config "$CONFIG_PATH"

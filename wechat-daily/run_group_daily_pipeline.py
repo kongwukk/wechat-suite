@@ -77,6 +77,10 @@ def main() -> int:
     export_json = resolve_config_path(config_path, input_value)
     decrypt_repo = resolve_config_path(config_path, decrypt_repo_value)
 
+    print(f"[group_daily] config={config_path}")
+    print(f"[group_daily] chat_name={chat_name}")
+    print(f"[group_daily] date={target_date}")
+
     run_export(decrypt_repo, chat_name, export_json)
     run_summary(project_dir, config_path, chat_name, target_date, export_json)
     return 0

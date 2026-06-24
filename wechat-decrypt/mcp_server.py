@@ -496,6 +496,7 @@ def _split_msg_type(t):
 def resolve_username(chat_name):
     """将聊天名/备注名/wxid 解析为 username"""
     names = get_contact_names()
+    contacts = get_contact_full()
 
     # 直接是 username
     if chat_name in names or chat_name.startswith('wxid_') or '@chatroom' in chat_name:
@@ -506,9 +507,19 @@ def resolve_username(chat_name):
     for uname, display in names.items():
         if chat_lower == display.lower():
             return uname
+    for contact in contacts:
+        for field in ('remark', 'nick_name', 'username', 'alias'):
+            value = (contact.get(field) or '').strip()
+            if value and chat_lower == value.lower():
+                return contact['username']
     for uname, display in names.items():
         if chat_lower in display.lower():
             return uname
+    for contact in contacts:
+        for field in ('remark', 'nick_name', 'username', 'alias'):
+            value = (contact.get(field) or '').strip()
+            if value and chat_lower in value.lower():
+                return contact['username']
 
     return None
 

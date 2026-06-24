@@ -143,9 +143,19 @@ def _auto_detect_db_dir_linux():
     """
     seen = set()
     candidates = []
-    search_roots = [
+    search_roots = []
+
+    def _add_search_root(path):
+        normalized = os.path.normcase(os.path.normpath(path))
+        if normalized not in seen:
+            seen.add(normalized)
+            search_roots.append(path)
+
+    for candidate in (
         os.path.expanduser("~/Documents/xwechat_files"),
-    ]
+        os.path.expanduser("~/文档/xwechat_files"),
+    ):
+        _add_search_root(candidate)
     # sudo 运行时，~ 展开为 /root；回退到实际用户的 home
     sudo_user = os.environ.get("SUDO_USER")
     if sudo_user:
@@ -156,9 +166,11 @@ def _auto_detect_db_dir_linux():
         except KeyError:
             sudo_home = None
         if sudo_home:
-            fallback = os.path.join(sudo_home, "Documents", "xwechat_files")
-            if fallback not in search_roots:
-                search_roots.append(fallback)
+            for fallback in (
+                os.path.join(sudo_home, "Documents", "xwechat_files"),
+                os.path.join(sudo_home, "文档", "xwechat_files"),
+            ):
+                _add_search_root(fallback)
 
     for root in search_roots:
         if not os.path.isdir(root):
