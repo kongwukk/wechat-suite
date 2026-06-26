@@ -11,22 +11,23 @@ echo   WeChat Daily - Install Scheduled Task
 echo =============================================
 echo.
 
-set PROJECT_DIR=%~dp0
+set "PROJECT_DIR=%~dp0"
 
 REM Use venv Python if available, otherwise fall back to system Python
-set VENV_PYTHON=%PROJECT_DIR%venv\python.exe
+set "VENV_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
+if not exist "%VENV_PYTHON%" set "VENV_PYTHON=%PROJECT_DIR%venv\Scripts\python.exe"
 if exist "%VENV_PYTHON%" (
-    set PYTHON_PATH=%VENV_PYTHON%
+    set "PYTHON_PATH=%VENV_PYTHON%"
     echo Python: venv ^(%VENV_PYTHON%^)
 ) else (
-    set PYTHON_PATH=python
+    set "PYTHON_PATH=python"
     echo Python: system python
 )
 
 "%PYTHON_PATH%" --version >nul 2>&1
 if errorlevel 1 (
     echo [Error] Python not found.
-    echo Please install Python or create a venv at %PROJECT_DIR%venv\
+    echo Please install Python or run setup_win11.bat from the repository root.
     pause
     exit /b 1
 )
@@ -34,13 +35,22 @@ if errorlevel 1 (
 echo Project dir: %PROJECT_DIR%
 echo.
 
+set "CONFIG_PATH=%PROJECT_DIR%config.yaml"
+if exist "%PROJECT_DIR%config.local.yaml" set "CONFIG_PATH=%PROJECT_DIR%config.local.yaml"
+echo Config: %CONFIG_PATH%
+echo.
+
+if not exist "%PROJECT_DIR%logs" mkdir "%PROJECT_DIR%logs"
+
 echo Creating run script...
 (
 echo @echo off
 echo chcp 65001 ^>nul
+echo set PYTHONUTF8=1
+echo set PYTHONIOENCODING=utf-8
 echo cd /d "%PROJECT_DIR%"
 echo echo [%%date%% %%time%%] Start WeChat Daily ^>^> logs\scheduler.log
-echo "%PYTHON_PATH%" main.py ^>^> logs\scheduler.log 2^>^&1
+echo "%PYTHON_PATH%" "%PROJECT_DIR%run_group_daily_pipeline.py" --config "%CONFIG_PATH%" ^>^> logs\scheduler.log 2^>^&1
 echo echo [%%date%% %%time%%] Done ^>^> logs\scheduler.log
 ) > "%PROJECT_DIR%run_daily.bat"
 

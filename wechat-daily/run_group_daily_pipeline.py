@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,25 +17,67 @@ from summarize_export_chat import (
 )
 
 
+def _python_candidates(project_dir: Path) -> list[Path]:
+    return [
+        project_dir / ".venv" / "Scripts" / "python.exe",
+        project_dir / ".venv" / "Scripts" / "python",
+        project_dir / ".venv" / "bin" / "python",
+        project_dir / ".venv" / "bin" / "python3",
+        project_dir / "venv" / "Scripts" / "python.exe",
+        project_dir / "venv" / "Scripts" / "python",
+        project_dir / "venv" / "bin" / "python",
+        project_dir / "venv" / "bin" / "python3",
+    ]
+
+
+def resolve_python_command(project_dir: Path) -> list[str]:
+    for candidate in _python_candidates(project_dir):
+        if candidate.exists():
+            return [str(candidate)]
+
+    if os.name == "nt":
+        py_launcher = shutil.which("py")
+        if py_launcher:
+            return [py_launcher, "-3"]
+
+    for executable in ("python", "python3"):
+        found = shutil.which(executable)
+        if found:
+            return [found]
+
+    if sys.executable:
+        return [sys.executable]
+
+    raise SystemExit(
+        "missing Python for wechat-decrypt. On Windows, run setup_win11.bat "
+        "from the repository root to create .venv environments."
+    )
+
+
 def run_export(decrypt_repo: Path, chat_name: str, export_json: Path) -> None:
-    decrypt_python = decrypt_repo / ".venv" / "bin" / "python"
+    decrypt_python = resolve_python_command(decrypt_repo)
     export_script = decrypt_repo / "export_chat.py"
 
-    if not decrypt_python.exists():
-        raise SystemExit(f"missing decrypt python: {decrypt_python}")
     if not export_script.exists():
         raise SystemExit(f"missing export script: {export_script}")
 
     export_json.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     subprocess.run(
-        [str(decrypt_python), str(export_script), chat_name, str(export_json)],
+        [*decrypt_python, str(export_script), chat_name, str(export_json)],
         cwd=str(decrypt_repo),
+        env=env,
         check=True,
     )
 
 
 def run_summary(project_dir: Path, config_path: Path, chat_name: str, target_date: str, export_json: Path) -> None:
     summarize_script = project_dir / "summarize_export_chat.py"
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     subprocess.run(
         [
             sys.executable,
@@ -48,13 +92,14 @@ def run_summary(project_dir: Path, config_path: Path, chat_name: str, target_dat
             chat_name,
         ],
         cwd=str(project_dir),
+        env=env,
         check=True,
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Export WeChat chat and generate daily markdown.")
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("-c", "--config", default="config.yaml")
     parser.add_argument("--chat-name", help="Override group_daily.chat_name")
     parser.add_argument("--date", help='Override group_daily.date, format YYYY-MM-DD or "today"')
     parser.add_argument("--input", help="Override group_daily.input_json")

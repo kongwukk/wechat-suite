@@ -13,7 +13,7 @@
 
 ## 适用环境
 
-- Linux / Ubuntu
+- Windows 11 或 Linux / Ubuntu
 - Python 3.12+
 - 已解密的微信数据库或可通过 `wechat-decrypt` 读取的微信数据
 - DeepSeek、NewAPI 或其他 OpenAI 兼容模型 API Key
@@ -22,16 +22,41 @@
 
 ### 1. 安装依赖
 
+Windows 11 推荐在仓库根目录运行：
+
+```bat
+setup_win11.bat
+```
+
+只安装本目录依赖也可以：
+
+```bat
+cd wechat-daily
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Linux / Ubuntu：
+
 ```bash
 cd wechat-daily
+python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
 ### 2. 配置
 
-编辑 `config.yaml`。
+建议复制模板到本地配置后编辑：
 
-如果同目录下存在 `config.local.yaml`，`./run_group_daily.sh` 会优先使用它；
+```bat
+copy config.yaml.example config.local.yaml
+```
+
+```bash
+cp config.yaml.example config.local.yaml
+```
+
+如果同目录下存在 `config.local.yaml`，`run_group_daily.bat` / `./run_group_daily.sh` 会优先使用它；
 命令启动时也会打印当前实际使用的配置文件路径。
 
 如果你只想用“群聊日报”功能，只需要改这几项：
@@ -61,11 +86,23 @@ ai:
 
 ## 一键运行
 
+Windows 11：
+
+```bat
+run_group_daily.bat
+```
+
+Linux / Ubuntu：
+
 ```bash
 ./run_group_daily.sh
 ```
 
 如果你想显式指定配置文件：
+
+```bat
+run_group_daily.bat C:\path\to\config.local.yaml
+```
 
 ```bash
 ./run_group_daily.sh /abs/path/to/config.yaml
@@ -97,7 +134,7 @@ python main.py --output-dir out --chat "某个群"
 - `main.py`：原始每日总结主流程
 - `summarize_export_chat.py`：把导出的群聊 JSON 生成 Markdown
 - `run_group_daily_pipeline.py`：一键导出 + 一键总结
-- `run_group_daily.sh`：最短入口脚本
+- `run_group_daily.bat` / `run_group_daily.sh`：Windows / Linux 入口脚本
 - `wechat_core/`：直接读微信数据库的核心模块
 - `prompts/`：AI prompt 模板
 

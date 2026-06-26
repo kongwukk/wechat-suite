@@ -69,3 +69,12 @@ processing:
 logging:
   level: "INFO"
   file: "logs/run.log"
+
+# ---------- 群聊日报一键流程 ----------
+group_daily:
+  chat_name: ""                       # 要总结的群聊名称；也可以在命令行传 --chat-name
+  date: "today"                       # YYYY-MM-DD 或 today
+  input_json: ""                      # 留空则自动写入 markdown_exports/<群名>-export.json
+  output_dir: "group_daily_exports"
+  decrypt_repo: "../wechat-decrypt"
+  max_messages: 260
