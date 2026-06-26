@@ -51,7 +51,9 @@ def resolve_config_path(config_path: Path, value: str) -> Path:
     return (config_path.parent / path).resolve()
 
 
-def get_group_daily_config(config: dict) -> dict[str, Any]:
+def get_report_config(config: dict, mode: str) -> dict[str, Any]:
+    if mode == "personal":
+        return config.get("personal_chat", {}) or {}
     return config.get("group_daily", {}) or {}
 
 
@@ -62,7 +64,31 @@ def resolve_target_date(raw_value: str | None) -> str:
     return raw_value
 
 
-def filter_messages(messages: list[dict], target_date: str) -> list[dict]:
+def resolve_date_window(
+    raw_date: str | None,
+    raw_start_date: str | None = None,
+    raw_end_date: str | None = None,
+) -> tuple[str, str]:
+    if raw_start_date or raw_end_date:
+        start_date = resolve_target_date(raw_start_date or raw_end_date)
+        end_date = resolve_target_date(raw_end_date or raw_start_date)
+    else:
+        start_date = resolve_target_date(raw_date)
+        end_date = start_date
+
+    if start_date > end_date:
+        raise ValueError(f"start_date must be <= end_date: {start_date} > {end_date}")
+    return start_date, end_date
+
+
+def format_date_label(start_date: str, end_date: str, *, for_filename: bool = False) -> str:
+    if start_date == end_date:
+        return start_date
+    separator = "_to_" if for_filename else " 至 "
+    return f"{start_date}{separator}{end_date}"
+
+
+def filter_messages(messages: list[dict], start_date: str, end_date: str) -> list[dict]:
     kept: list[dict] = []
     for msg in messages:
         timestamp = msg.get("timestamp")
@@ -70,7 +96,7 @@ def filter_messages(messages: list[dict], target_date: str) -> list[dict]:
             continue
 
         msg_date = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
-        if msg_date != target_date:
+        if msg_date < start_date or msg_date > end_date:
             continue
 
         msg_type = msg.get("type", "text")
@@ -89,34 +115,47 @@ def filter_messages(messages: list[dict], target_date: str) -> list[dict]:
     return kept
 
 
-def build_chat_text(chat_name: str, target_date: str, messages: list[dict], max_messages: int) -> str:
+def build_chat_text(
+    chat_name: str,
+    date_label: str,
+    messages: list[dict],
+    max_messages: int,
+    mode: str,
+    my_nickname: str = "",
+    show_message_date: bool = False,
+) -> str:
     if len(messages) > max_messages:
         messages = messages[-max_messages:]
 
     sender_counts = Counter((msg.get("sender") or "匿名成员") for msg in messages)
     top_senders = "，".join(f"{sender}({count})" for sender, count in sender_counts.most_common(12))
+    chat_label = "联系人" if mode == "personal" else "群聊"
+    sender_label = "发言人" if mode == "personal" else "活跃成员"
 
     lines = [
-        f"群聊: {chat_name}",
-        f"日期: {target_date}",
+        f"{chat_label}: {chat_name}",
+        f"日期范围: {date_label}",
         f"消息数: {len(messages)}",
-        f"活跃成员: {top_senders}",
-        "",
-        "聊天记录:",
+        f"{sender_label}: {top_senders}",
     ]
+    if my_nickname:
+        lines.append(f"我的昵称: {my_nickname}")
+
+    lines.extend(["", "聊天记录:"])
 
     for msg in messages:
         sender = (msg.get("sender") or "匿名成员").strip() or "匿名成员"
         content = (msg.get("content") or "").replace("\n", " ").strip()
         if len(content) > 500:
             content = content[:500] + "..."
-        time_text = datetime.fromtimestamp(msg["timestamp"]).strftime("%H:%M")
+        time_format = "%m-%d %H:%M" if show_message_date else "%H:%M"
+        time_text = datetime.fromtimestamp(msg["timestamp"]).strftime(time_format)
         lines.append(f"[{time_text}] {sender}: {content}")
 
     return "\n".join(lines)
 
 
-def build_prompt(chat_text: str) -> str:
+def build_group_prompt(chat_text: str) -> str:
     return f"""你是一个微信群聊分析助手。请根据下面某个微信群在指定日期的聊天记录，输出一份面向群主/成员都能直接阅读的 Markdown 日报。
 
 要求：
@@ -146,6 +185,52 @@ def build_prompt(chat_text: str) -> str:
 
 {chat_text}
 """
+
+
+def build_personal_prompt(chat_text: str) -> str:
+    return f"""你是一个细致、克制的私人聊天分析助手。请根据下面某个联系人和用户在指定日期或时间范围内的聊天记录，输出一份 Markdown 个人关系与信息摘要。
+
+要求：
+1. 重点分析这个人对用户的态度、情绪倾向、关注点、提出的建议、明确请求、隐含期待和需要后续回应的事项。
+2. 所有判断必须基于聊天文本，避免读心、夸大或给出心理诊断；证据不足时要明确写“不确定”或“证据不足”。
+3. 区分“对方明确说了什么”和“可以谨慎推断什么”。
+4. 不要把用户自己的表达误判成对方态度；如果 sender 是 me 或用户昵称，视为用户消息。
+5. 输出必须是 Markdown，格式严格如下：
+
+# {{日期}} {{联系人}} 个人聊天摘要
+
+## 核心概览
+用 100-180 字概括这段对话最重要的信息。
+
+## 对方对用户的态度
+- 态度判断：友好 / 支持 / 中立 / 有压力 / 不满 / 暧昧 / 疏离 / 无法判断，可多选
+- 依据：列出 2 到 5 条来自聊天内容的具体依据，避免长篇引用
+- 不确定性：说明哪些判断证据不足
+
+## 对方的建议
+- 列出对方明确提出的建议、提醒、反对意见或推荐方案
+- 没有就写“未见明确建议”
+
+## 对方的需求与期待
+- 列出对方希望用户做什么、回应什么、避免什么
+- 没有就写“未见明确需求”
+
+## 关键信息
+- 列出时间、地点、人物、产品、链接方向、价格、承诺、结论等
+
+## 建议回应
+- 给出 2 到 4 条用户接下来可以如何回复或跟进的建议
+
+下面是聊天记录：
+
+{chat_text}
+"""
+
+
+def build_prompt(chat_text: str, mode: str) -> str:
+    if mode == "personal":
+        return build_personal_prompt(chat_text)
+    return build_group_prompt(chat_text)
 
 
 def call_model(config: dict, prompt: str) -> str:
@@ -179,12 +264,15 @@ def call_model(config: dict, prompt: str) -> str:
 
 
 def safe_name(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip()).strip("._-") or "chat"
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", value.strip())
+    safe = re.sub(r"\s+", "_", safe)
+    return safe.strip("._-") or "chat"
 
 
-def write_markdown(output_dir: Path, target_date: str, chat_name: str, content: str) -> Path:
+def write_markdown(output_dir: Path, date_label: str, chat_name: str, content: str, mode: str) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{target_date}-{safe_name(chat_name)}-summary.md"
+    suffix = "personal-summary" if mode == "personal" else "summary"
+    path = output_dir / f"{date_label}-{safe_name(chat_name)}-{suffix}.md"
     path.write_text(content.rstrip() + "\n", encoding="utf-8")
     return path
 
@@ -194,9 +282,12 @@ def main() -> int:
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--input", help="Path to exported chat JSON")
     parser.add_argument("--date", help='Target date in YYYY-MM-DD, or "today"')
+    parser.add_argument("--start-date", help='Start date in YYYY-MM-DD, or "today"')
+    parser.add_argument("--end-date", help='End date in YYYY-MM-DD, or "today"')
     parser.add_argument("--output-dir", help="Directory for generated markdown")
     parser.add_argument("--chat-name", help="Override chat name shown in the report")
     parser.add_argument("--max-messages", type=int, help="Maximum number of messages sent to the model")
+    parser.add_argument("--mode", choices=("group", "personal"), default="group", help="Report type")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -204,28 +295,45 @@ def main() -> int:
 
     config_path = Path(args.config).resolve()
     config = load_config(str(config_path))
-    group_daily_cfg = get_group_daily_config(config)
+    report_cfg = get_report_config(config, args.mode)
 
-    chat_name = args.chat_name or group_daily_cfg.get("chat_name")
+    chat_name = args.chat_name or report_cfg.get("chat_name")
     default_input = f"markdown_exports/{safe_name(chat_name or 'chat')}-export.json"
-    input_value = args.input or group_daily_cfg.get("input_json") or default_input
-    output_value = args.output_dir or group_daily_cfg.get("output_dir", "group_daily_exports")
-    target_date = resolve_target_date(args.date or group_daily_cfg.get("date"))
-    max_messages = args.max_messages or int(group_daily_cfg.get("max_messages", 260))
+    default_output = "personal_chat_exports" if args.mode == "personal" else "group_daily_exports"
+    input_value = args.input or report_cfg.get("input_json") or default_input
+    output_value = args.output_dir or report_cfg.get("output_dir", default_output)
+    start_date, end_date = resolve_date_window(
+        args.date or report_cfg.get("date"),
+        args.start_date or report_cfg.get("start_date"),
+        args.end_date or report_cfg.get("end_date"),
+    )
+    date_label = format_date_label(start_date, end_date)
+    filename_date_label = format_date_label(start_date, end_date, for_filename=True)
+    max_messages = args.max_messages or int(report_cfg.get("max_messages", 260))
+    my_nickname = config.get("wechat", {}).get("my_nickname", "")
 
     input_path = resolve_config_path(config_path, input_value)
     output_dir = resolve_config_path(config_path, output_value)
 
     payload = json.loads(input_path.read_text(encoding="utf-8"))
-    chat_name = chat_name or payload.get("chat", "微信群")
-    messages = filter_messages(payload.get("messages", []), target_date)
+    fallback_chat_name = "联系人" if args.mode == "personal" else "微信群"
+    chat_name = chat_name or payload.get("chat", fallback_chat_name)
+    messages = filter_messages(payload.get("messages", []), start_date, end_date)
     if not messages:
-        raise SystemExit(f"no messages found for {target_date}")
+        raise SystemExit(f"no messages found for {date_label}")
 
-    chat_text = build_chat_text(chat_name, target_date, messages, max_messages)
-    prompt = build_prompt(chat_text)
+    chat_text = build_chat_text(
+        chat_name,
+        date_label,
+        messages,
+        max_messages,
+        args.mode,
+        my_nickname,
+        show_message_date=start_date != end_date,
+    )
+    prompt = build_prompt(chat_text, args.mode)
     markdown = call_model(config, prompt)
-    output_path = write_markdown(output_dir, target_date, chat_name, markdown)
+    output_path = write_markdown(output_dir, filename_date_label, chat_name, markdown, args.mode)
 
     print(output_path)
     return 0

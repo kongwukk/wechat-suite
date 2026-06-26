@@ -1,4 +1,4 @@
-"""Export a configured WeChat group chat and generate the daily Markdown report."""
+"""Export a configured WeChat chat and generate a Markdown report."""
 
 from __future__ import annotations
 
@@ -10,9 +10,11 @@ import sys
 from pathlib import Path
 
 from summarize_export_chat import (
+    format_date_label,
+    get_report_config,
     load_config,
+    resolve_date_window,
     resolve_config_path,
-    resolve_target_date,
     safe_name,
 )
 
@@ -73,7 +75,15 @@ def run_export(decrypt_repo: Path, chat_name: str, export_json: Path) -> None:
     )
 
 
-def run_summary(project_dir: Path, config_path: Path, chat_name: str, target_date: str, export_json: Path) -> None:
+def run_summary(
+    project_dir: Path,
+    config_path: Path,
+    chat_name: str,
+    start_date: str,
+    end_date: str,
+    export_json: Path,
+    mode: str,
+) -> None:
     summarize_script = project_dir / "summarize_export_chat.py"
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
@@ -86,10 +96,14 @@ def run_summary(project_dir: Path, config_path: Path, chat_name: str, target_dat
             str(config_path),
             "--input",
             str(export_json),
-            "--date",
-            target_date,
+            "--start-date",
+            start_date,
+            "--end-date",
+            end_date,
             "--chat-name",
             chat_name,
+            "--mode",
+            mode,
         ],
         cwd=str(project_dir),
         env=env,
@@ -100,34 +114,44 @@ def run_summary(project_dir: Path, config_path: Path, chat_name: str, target_dat
 def main() -> int:
     parser = argparse.ArgumentParser(description="Export WeChat chat and generate daily markdown.")
     parser.add_argument("-c", "--config", default="config.yaml")
-    parser.add_argument("--chat-name", help="Override group_daily.chat_name")
-    parser.add_argument("--date", help='Override group_daily.date, format YYYY-MM-DD or "today"')
-    parser.add_argument("--input", help="Override group_daily.input_json")
-    parser.add_argument("--decrypt-repo", help="Override group_daily.decrypt_repo")
+    parser.add_argument("--mode", choices=("group", "personal"), default="group", help="Report type")
+    parser.add_argument("--chat-name", help="Override configured chat_name")
+    parser.add_argument("--date", help='Override configured date, format YYYY-MM-DD or "today"')
+    parser.add_argument("--start-date", help='Override configured start_date, format YYYY-MM-DD or "today"')
+    parser.add_argument("--end-date", help='Override configured end_date, format YYYY-MM-DD or "today"')
+    parser.add_argument("--input", help="Override configured input_json")
+    parser.add_argument("--decrypt-repo", help="Override configured decrypt_repo")
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
     project_dir = config_path.parent
     config = load_config(str(config_path))
-    group_daily_cfg = config.get("group_daily", {}) or {}
+    report_cfg = get_report_config(config, args.mode)
 
-    chat_name = args.chat_name or group_daily_cfg.get("chat_name")
+    chat_name = args.chat_name or report_cfg.get("chat_name")
     if not chat_name:
-        raise SystemExit("missing chat name: set group_daily.chat_name in config.yaml or pass --chat-name")
+        config_key = "personal_chat.chat_name" if args.mode == "personal" else "group_daily.chat_name"
+        raise SystemExit(f"missing chat name: set {config_key} in config.yaml or pass --chat-name")
 
-    target_date = resolve_target_date(args.date or group_daily_cfg.get("date"))
-    input_value = args.input or group_daily_cfg.get("input_json") or f"markdown_exports/{safe_name(chat_name)}-export.json"
-    decrypt_repo_value = args.decrypt_repo or group_daily_cfg.get("decrypt_repo") or "../wechat-decrypt"
+    start_date, end_date = resolve_date_window(
+        args.date or report_cfg.get("date"),
+        args.start_date or report_cfg.get("start_date"),
+        args.end_date or report_cfg.get("end_date"),
+    )
+    date_label = format_date_label(start_date, end_date)
+    input_value = args.input or report_cfg.get("input_json") or f"markdown_exports/{safe_name(chat_name)}-export.json"
+    decrypt_repo_value = args.decrypt_repo or report_cfg.get("decrypt_repo") or "../wechat-decrypt"
 
     export_json = resolve_config_path(config_path, input_value)
     decrypt_repo = resolve_config_path(config_path, decrypt_repo_value)
 
-    print(f"[group_daily] config={config_path}")
-    print(f"[group_daily] chat_name={chat_name}")
-    print(f"[group_daily] date={target_date}")
+    label = "personal_chat" if args.mode == "personal" else "group_daily"
+    print(f"[{label}] config={config_path}")
+    print(f"[{label}] chat_name={chat_name}")
+    print(f"[{label}] date={date_label}")
 
     run_export(decrypt_repo, chat_name, export_json)
-    run_summary(project_dir, config_path, chat_name, target_date, export_json)
+    run_summary(project_dir, config_path, chat_name, start_date, end_date, export_json, args.mode)
     return 0
 
 

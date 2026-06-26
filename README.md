@@ -1,11 +1,12 @@
 # WeChat Suite
 
-WeChat Suite 是一个面向本地微信聊天记录的整理工具包。它把两个能力组合到一个仓库里：先从真实微信数据库导出聊天记录，再用大模型按天生成 Markdown 群聊日报。
+WeChat Suite 是一个面向本地微信聊天记录的整理工具包。它把两个能力组合到一个仓库里：先从真实微信数据库导出聊天记录，再用大模型按天生成 Markdown 群聊日报或个人聊天摘要。
 
 ## 功能特性
 
-- 从本地微信数据库导出指定群聊记录
+- 从本地微信数据库导出指定群聊或联系人聊天记录
 - 按日期生成群聊日报 Markdown
+- 按日期生成个人聊天摘要，分析对方态度、建议、需求与关键信息
 - 支持 DeepSeek、NewAPI 以及 OpenAI 兼容接口
 - 保留 `wechat-daily` 原有的控制台输出、Markdown 输出和 Notion 流程
 - 将导出文件、日志、密钥和本地配置默认排除在 Git 之外
@@ -30,7 +31,7 @@ wechat-daily 读取 JSON 并筛选指定日期
   ↓
 调用 DeepSeek / NewAPI / OpenAI 兼容模型
   ↓
-生成 Markdown 群聊日报
+生成 Markdown 群聊日报或个人聊天摘要
 ```
 
 ## 环境要求
@@ -131,12 +132,21 @@ ai:
 group_daily:
   chat_name: "Walk AI Coding"
   date: "2026-06-23"
+
+personal_chat:
+  chat_name: "张三"
+  date: "2026-06-23"        # 单日摘要
+  # start_date: "2026-06-01" # 时间段摘要，填了 start_date/end_date 会优先于 date
+  # end_date: "2026-06-23"
 ```
 
 说明：
 
 - `group_daily.chat_name`：要总结的群聊名称
+- `personal_chat.chat_name`：要总结的联系人显示名、备注名或 wxid
 - `group_daily.date`：要总结的日期，格式为 `YYYY-MM-DD`
+- `personal_chat.date`：个人聊天单日摘要日期
+- `personal_chat.start_date` / `personal_chat.end_date`：个人聊天时间段摘要，格式为 `YYYY-MM-DD` 或 `today`
 - `ai.api_key`：你的模型 API Key
 - `group_daily.decrypt_repo`：默认是 `../wechat-decrypt`，通常不用改
 
@@ -152,6 +162,16 @@ Linux / Ubuntu 在仓库根目录运行：
 
 ```bash
 ./run.sh
+```
+
+生成个人聊天摘要：
+
+```bat
+run.bat --mode personal
+```
+
+```bash
+./run.sh --mode personal
 ```
 
 脚本会自动优先读取：
@@ -173,6 +193,7 @@ wechat-daily/config.yaml
 ```text
 wechat-daily/markdown_exports/       # 中间 JSON 导出文件
 wechat-daily/group_daily_exports/    # 最终 Markdown 日报
+wechat-daily/personal_chat_exports/  # 最终个人聊天摘要
 ```
 
 示例文件名：
@@ -180,6 +201,8 @@ wechat-daily/group_daily_exports/    # 最终 Markdown 日报
 ```text
 wechat-daily/markdown_exports/Walk_AI_Coding-export.json
 wechat-daily/group_daily_exports/2026-06-23-Walk_AI_Coding-summary.md
+wechat-daily/personal_chat_exports/2026-06-23-张三-personal-summary.md
+wechat-daily/personal_chat_exports/2026-06-01_to_2026-06-23-张三-personal-summary.md
 ```
 
 ## 常用命令
@@ -194,6 +217,20 @@ run_group_daily.bat config.local.yaml --date 2026-06-23
 ```bash
 cd wechat-daily
 ./run_group_daily.sh config.local.yaml --date 2026-06-23
+```
+
+临时指定联系人生成个人摘要：
+
+```bash
+cd wechat-daily
+./run_group_daily.sh config.local.yaml --mode personal --chat-name "张三" --date 2026-06-23
+```
+
+生成某段时间的个人摘要：
+
+```bash
+cd wechat-daily
+./run_group_daily.sh config.local.yaml --mode personal --chat-name "张三" --start-date 2026-06-01 --end-date 2026-06-23
 ```
 
 使用原 `wechat-daily` 控制台输出：

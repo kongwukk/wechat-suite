@@ -78,3 +78,14 @@ group_daily:
   output_dir: "group_daily_exports"
   decrypt_repo: "../wechat-decrypt"
   max_messages: 260
+
+# ---------- 个人聊天摘要一键流程 ----------
+personal_chat:
+  chat_name: ""                       # 联系人显示名、备注名或 wxid；也可以在命令行传 --chat-name
+  date: "today"                       # 单日摘要：YYYY-MM-DD 或 today
+  start_date: ""                      # 时间段摘要开始日期；填了 start_date/end_date 会优先于 date
+  end_date: ""                        # 时间段摘要结束日期；YYYY-MM-DD 或 today
+  input_json: ""                      # 留空则自动写入 markdown_exports/<联系人>-export.json
+  output_dir: "personal_chat_exports"
+  decrypt_repo: "../wechat-decrypt"
+  max_messages: 320

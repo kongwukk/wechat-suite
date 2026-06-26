@@ -2,12 +2,13 @@
 
 微信聊天自动总结工具。
 
-它可以从真实微信数据库里导出指定群聊，再用 DeepSeek、NewAPI 或其他 OpenAI 兼容模型生成当天 Markdown 日报。也支持继续保留原来的 Notion 流程。
+它可以从真实微信数据库里导出指定群聊或联系人聊天，再用 DeepSeek、NewAPI 或其他 OpenAI 兼容模型生成当天 Markdown 日报或个人聊天摘要。也支持继续保留原来的 Notion 流程。
 
 ## 现在能做什么
 
 - 直接读取真实微信数据，导出指定群聊
 - 按天生成群聊总结 Markdown
+- 按天生成个人聊天摘要，分析对方态度、建议、需求和关键信息
 - 也可以继续使用原来的每日总结 + 待办提取流程
 - 支持 DeepSeek、NewAPI、OpenAI 兼容接口
 
@@ -65,11 +66,19 @@ cp config.yaml.example config.local.yaml
 group_daily:
   chat_name: "Walk AI Coding"
   date: "2026-06-23"
+
+personal_chat:
+  chat_name: "张三"
+  date: "2026-06-23"        # 单日摘要
+  # start_date: "2026-06-01" # 时间段摘要，填了 start_date/end_date 会优先于 date
+  # end_date: "2026-06-23"
 ```
 
 说明：
 - `chat_name` 是群名
+- `personal_chat.chat_name` 是联系人显示名、备注名或 wxid
 - `date` 是要总结的日期，格式 `YYYY-MM-DD`
+- `personal_chat.start_date` / `personal_chat.end_date` 可以生成一段时间内的个人聊天摘要
 - 导出路径和输出目录会自动使用默认值
 
 使用 NewAPI 时，把 `ai` 改成类似这样：
@@ -98,6 +107,22 @@ Linux / Ubuntu：
 ./run_group_daily.sh
 ```
 
+生成个人聊天摘要：
+
+```bat
+run_group_daily.bat --mode personal
+```
+
+```bash
+./run_group_daily.sh --mode personal
+```
+
+生成某段时间的个人聊天摘要：
+
+```bash
+./run_group_daily.sh config.local.yaml --mode personal --chat-name "张三" --start-date 2026-06-01 --end-date 2026-06-23
+```
+
 如果你想显式指定配置文件：
 
 ```bat
@@ -110,14 +135,16 @@ run_group_daily.bat C:\path\to\config.local.yaml
 
 它会自动：
 
-1. 从真实微信数据导出指定群聊
+1. 从真实微信数据导出指定群聊或联系人聊天
 2. 生成当天 Markdown
-3. 输出到 `group_daily_exports/`
+3. 群聊日报输出到 `group_daily_exports/`，个人摘要输出到 `personal_chat_exports/`
 
 ## 输出文件
 
 - 导出的 JSON：`markdown_exports/<群名>-export.json`
 - 生成的 Markdown：`group_daily_exports/<日期>-<群名>-summary.md`
+- 个人摘要 Markdown：`personal_chat_exports/<日期>-<联系人>-personal-summary.md`
+- 个人时间段摘要 Markdown：`personal_chat_exports/<开始日期>_to_<结束日期>-<联系人>-personal-summary.md`
 
 ## 保留的原有功能
 
@@ -133,7 +160,7 @@ python main.py --output-dir out --chat "某个群"
 
 - `main.py`：原始每日总结主流程
 - `summarize_export_chat.py`：把导出的群聊 JSON 生成 Markdown
-- `run_group_daily_pipeline.py`：一键导出 + 一键总结
+- `run_group_daily_pipeline.py`：一键导出 + 一键总结，支持群聊和个人聊天模式
 - `run_group_daily.bat` / `run_group_daily.sh`：Windows / Linux 入口脚本
 - `wechat_core/`：直接读微信数据库的核心模块
 - `prompts/`：AI prompt 模板
